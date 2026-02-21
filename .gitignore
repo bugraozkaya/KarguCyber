@@ -12,3 +12,6 @@ server.key
 
 # İşletim Sistemi
 .DS_Store
+
+*.key
+*.pub
