@@ -2,6 +2,7 @@ import socket
 import paramiko
 import threading
 import sqlite3
+import requests  # [ADIM 3] API'ye haber uçurmak için eklendi
 from datetime import datetime
 
 HOST = '0.0.0.0'
@@ -27,11 +28,29 @@ def setup_db():
 db_conn = setup_db()
 
 def log_attack(ip, username, password, command):
+    timestamp = datetime.now()
+    
+    # 1. Veritabanına kaydet
     cursor = db_conn.cursor()
     cursor.execute("INSERT INTO attack_logs (ip_address, username, password, command, timestamp) VALUES (?, ?, ?, ?, ?)",
-                   (ip, username, password, command, datetime.now()))
+                   (ip, username, password, command, timestamp))
     db_conn.commit()
     print(f"[LOG] {ip} - {username}:{password} - Komut: {command}")
+
+    # 2. [ADIM 3] Canlı yayın için API'ye haber ver
+    log_data = {
+        "ip_address": ip,
+        "username": username,
+        "password": password,
+        "command": command,
+        "timestamp": str(timestamp).split('.')[0] # Milisaniyeleri kırpıyoruz
+    }
+    try:
+        # Timeout'u kısa tutuyoruz (1 saniye), eğer API kapalıysa Honeypot kilitlenip donmasın
+        requests.post("http://127.0.0.1:8000/api/notify", json=log_data, timeout=1)
+    except Exception as e:
+        # API kapalıysa hata verme, sessizce geç
+        pass
 
 # --- PARAMIKO SAHTE SSH SUNUCUSU ---
 class KarguServer(paramiko.ServerInterface):
@@ -96,7 +115,7 @@ def handle_connection(client, addr):
                 channel.send("\r\n$ ")
                 continue
 
-            # Komutu veritabanına kaydet
+            # Komutu veritabanına kaydet ve API'ye uçur
             log_attack(addr[0], server.username, server.password, command)
 
             # Sahte komut cevapları

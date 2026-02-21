@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KarguCyber | Yönetim Paneli</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-200 font-mono p-6">
+
+    <div class="max-w-5xl mx-auto">
+        <div class="flex justify-between items-center mb-8 border-b border-gray-700 pb-4">
+            <div>
+                <h1 class="text-3xl font-bold text-red-500">🛡️ KarguCyber</h1>
+                <p class="text-sm text-gray-400 mt-1">Aktif Savunma ve Bal Küpü İzleme İstasyonu</p>
+            </div>
+            <div class="text-right">
+                <span class="bg-green-900 text-green-400 px-3 py-1 rounded text-sm animate-pulse">
+                    ● Sistem Aktif
+                </span>
+            </div>
+        </div>
+
+        <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden border border-gray-700">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-gray-950 text-gray-400 text-sm">
+                        <th class="p-4 border-b border-gray-700">Tarih / Saat</th>
+                        <th class="p-4 border-b border-gray-700">Saldırgan IP</th>
+                        <th class="p-4 border-b border-gray-700">Kullanıcı:Şifre</th>
+                        <th class="p-4 border-b border-gray-700 text-yellow-400">Çalıştırılan Komut</th>
+                        <th class="p-4 border-b border-gray-700 text-center">Aksiyon</th>
+                    </tr>
+                </thead>
+                <tbody id="log-table-body">
+                    <tr>
+                        <td colspan="5" class="p-4 text-center text-gray-500">Loglar yükleniyor...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // Sayfa ilk açıldığında geçmiş logları çeken fonksiyon
+        async function fetchLogs() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/logs');
+                const result = await response.json();
+
+                const tableBody = document.getElementById('log-table-body');
+                tableBody.innerHTML = ''; 
+
+                if (result.data.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">Henüz saldırı kaydı bulunmuyor.</td></tr>';
+                    return;
+                }
+
+                result.data.forEach(log => {
+                    const row = `
+                        <tr class="hover:bg-gray-700 transition duration-150">
+                            <td class="p-4 border-b border-gray-700 text-sm">${log.timestamp.split('.')[0]}</td>
+                            <td class="p-4 border-b border-gray-700 font-bold text-red-400">${log.ip_address}</td>
+                            <td class="p-4 border-b border-gray-700 text-gray-400">${log.username} : <span class="text-gray-500">${log.password}</span></td>
+                            <td class="p-4 border-b border-gray-700 text-yellow-300 font-bold">> ${log.command}</td>
+                            <td class="p-4 border-b border-gray-700 text-center">
+                                <button onclick="blockIp('${log.ip_address}')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-bold transition">
+                                    Engelle
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                    tableBody.innerHTML += row;
+                });
+
+            } catch (error) {
+                console.error("Veri çekme hatası:", error);
+                document.getElementById('log-table-body').innerHTML = '<tr><td colspan="5" class="p-4 text-center text-red-500">API bağlantı hatası! Sunucunun çalıştığından emin olun.</td></tr>';
+            }
+        }
+
+        // Kill Switch (İleride entegre edilecek)
+        function blockIp(ip) {
+            alert(ip + " adresi için Kill Switch tetiklendi! (Backend entegrasyonu yapılacak)");
+        }
+
+        // 1. AŞAMA: Önce geçmiş logları yükle
+        fetchLogs();
+
+        // 2. AŞAMA: WEBSOCKET İLE CANLI DİNLEME (Yeni Eklenen Kısım)
+        const ws = new WebSocket("ws://127.0.0.1:8000/ws/logs");
+
+        ws.onmessage = function(event) {
+            try {
+                // API'den gelen canlı veriyi yakala
+                const log = JSON.parse(event.data);
+                const tableBody = document.getElementById('log-table-body');
+
+                // "Henüz saldırı kaydı bulunmuyor" yazısı varsa temizle
+                if (tableBody.innerHTML.includes('Henüz saldırı kaydı bulunmuyor')) {
+                    tableBody.innerHTML = '';
+                }
+
+                // Yeni satırı oluştur (Görsel efekt için arka planını yeşilimsi yapıp solmasını sağlayacağız)
+                const newRow = `
+                    <tr class="bg-gray-700 transition duration-1000 ease-in-out">
+                        <td class="p-4 border-b border-gray-700 text-sm">${log.timestamp}</td>
+                        <td class="p-4 border-b border-gray-700 font-bold text-red-400">${log.ip_address}</td>
+                        <td class="p-4 border-b border-gray-700 text-gray-400">${log.username} : <span class="text-gray-500">${log.password}</span></td>
+                        <td class="p-4 border-b border-gray-700 text-yellow-300 font-bold">> ${log.command}</td>
+                        <td class="p-4 border-b border-gray-700 text-center">
+                            <button onclick="blockIp('${log.ip_address}')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-bold transition">
+                                Engelle
+                            </button>
+                        </td>
+                    </tr>
+                `;
+
+                // Tablonun en üstüne (afterbegin) ekle
+                tableBody.insertAdjacentHTML('afterbegin', newRow);
+
+                // Eklenen satırın rengini 1 saniye sonra normale (siyah/gri) çevir
+                setTimeout(() => {
+                    tableBody.firstElementChild.classList.remove('bg-gray-700');
+                    tableBody.firstElementChild.classList.add('hover:bg-gray-700');
+                }, 100);
+
+            } catch (e) {
+                console.log("Sistem mesajı: ", event.data);
+            }
+        };
+    </script>
+</body>
+</html>
