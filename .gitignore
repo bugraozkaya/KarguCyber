@@ -1,0 +1,14 @@
+# Python / Sanal Ortam
+venv/
+__pycache__/
+*.pyc
+
+# Veritabanı
+*.db
+*.sqlite3
+
+# Güvenlik (SSH Anahtarları)
+server.key
+
+# İşletim Sistemi
+.DS_Store
