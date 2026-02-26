@@ -75,6 +75,28 @@ def block_ip(request: BlockRequest):
     # Engellendiğine dair bilgi mesajı dön
     return {"status": "success", "message": f"{request.ip} adresi kara listeye alındı ve bağlantısı kesilecek!"}
 
+# --- YENİ: VERİTABANINDAN IP SİLME FONKSİYONU ---
+def remove_ip_from_blacklist(ip):
+    try:
+        conn = sqlite3.connect('kargucyber.db') # Senin veritabanı ismin
+        cursor = conn.cursor()
+        # Senin tablo ismin 'blocked_ips' ve kolon ismin 'ip'
+        cursor.execute("DELETE FROM blocked_ips WHERE ip = ?", (ip,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Hata: {e}")
+        return False
+
+# --- YENİ: YASAĞI KALDIRMA ENDPOINT'İ ---
+@app.delete("/api/unblock/{ip}")
+def unblock_ip(ip: str):
+    success = remove_ip_from_blacklist(ip)
+    if success:
+        return {"status": "success", "message": f"{ip} adresi kara listeden çıkarıldı."}
+    else:
+        return {"status": "error", "message": "IP silinirken bir hata oluştu."}
 # --- WEBSOCKET (CANLI YAYIN) ---
 
 class ConnectionManager:
