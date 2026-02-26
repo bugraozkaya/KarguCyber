@@ -57,19 +57,7 @@
                 }
 
                 result.data.forEach(log => {
-                    const row = `
-                        <tr class="hover:bg-gray-700 transition duration-150">
-                            <td class="p-4 border-b border-gray-700 text-sm">${log.timestamp.split('.')[0]}</td>
-                            <td class="p-4 border-b border-gray-700 font-bold text-red-400">${log.ip_address}</td>
-                            <td class="p-4 border-b border-gray-700 text-gray-400">${log.username} : <span class="text-gray-500">${log.password}</span></td>
-                            <td class="p-4 border-b border-gray-700 text-yellow-300 font-bold">> ${log.command}</td>
-                            <td class="p-4 border-b border-gray-700 text-center">
-                                <button onclick="blockIp('${log.ip_address}')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-bold transition">
-                                    Engelle
-                                </button>
-                            </td>
-                        </tr>
-                    `;
+                    const row = createRow(log);
                     tableBody.innerHTML += row;
                 });
 
@@ -79,50 +67,85 @@
             }
         }
 
-        // Kill Switch (İleride entegre edilecek)
-        function blockIp(ip) {
-            alert(ip + " adresi için Kill Switch tetiklendi! (Backend entegrasyonu yapılacak)");
+        // Tablo satırı oluşturucu yardımcı fonksiyon
+        function createRow(log) {
+            return `
+                <tr class="hover:bg-gray-700 transition duration-150">
+                    <td class="p-4 border-b border-gray-700 text-sm">${log.timestamp.split('.')[0]}</td>
+                    <td class="p-4 border-b border-gray-700 font-bold text-red-400">${log.ip_address}</td>
+                    <td class="p-4 border-b border-gray-700 text-gray-400">${log.username} : <span class="text-gray-500">${log.password}</span></td>
+                    <td class="p-4 border-b border-gray-700 text-yellow-300 font-bold">> ${log.command}</td>
+                    <td class="p-4 border-b border-gray-700 text-center">
+                        <button onclick="blockIp('${log.ip_address}')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-bold transition">
+                            Engelle
+                        </button>
+                    </td>
+                </tr>
+            `;
         }
 
-        // 1. AŞAMA: Önce geçmiş logları yükle
+        // [GÜNCELLENDİ] Gerçek Kill Switch Fonksiyonu
+        async function blockIp(ip) {
+            if(!confirm(ip + " adresini kalıcı olarak engellemek istiyor musunuz?")) return;
+
+            try {
+                // API'ye POST isteği atıyoruz
+                const response = await fetch('http://127.0.0.1:8000/api/block', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ ip: ip })
+                });
+
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    alert("🛑 BAŞARILI: " + ip + " bağlantısı kesildi ve kara listeye alındı!");
+                } else {
+                    alert("Hata: " + result.message);
+                }
+            } catch (error) {
+                alert("Bağlantı hatası: " + error);
+            }
+        }
+
+        // 1. AŞAMA: Geçmiş logları yükle
         fetchLogs();
 
-        // 2. AŞAMA: WEBSOCKET İLE CANLI DİNLEME (Yeni Eklenen Kısım)
+        // 2. AŞAMA: WEBSOCKET İLE CANLI DİNLEME
         const ws = new WebSocket("ws://127.0.0.1:8000/ws/logs");
 
         ws.onmessage = function(event) {
             try {
-                // API'den gelen canlı veriyi yakala
                 const log = JSON.parse(event.data);
                 const tableBody = document.getElementById('log-table-body');
 
-                // "Henüz saldırı kaydı bulunmuyor" yazısı varsa temizle
                 if (tableBody.innerHTML.includes('Henüz saldırı kaydı bulunmuyor')) {
                     tableBody.innerHTML = '';
                 }
 
-                // Yeni satırı oluştur (Görsel efekt için arka planını yeşilimsi yapıp solmasını sağlayacağız)
-                const newRow = `
-                    <tr class="bg-gray-700 transition duration-1000 ease-in-out">
-                        <td class="p-4 border-b border-gray-700 text-sm">${log.timestamp}</td>
-                        <td class="p-4 border-b border-gray-700 font-bold text-red-400">${log.ip_address}</td>
-                        <td class="p-4 border-b border-gray-700 text-gray-400">${log.username} : <span class="text-gray-500">${log.password}</span></td>
-                        <td class="p-4 border-b border-gray-700 text-yellow-300 font-bold">> ${log.command}</td>
-                        <td class="p-4 border-b border-gray-700 text-center">
-                            <button onclick="blockIp('${log.ip_address}')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-bold transition">
-                                Engelle
-                            </button>
-                        </td>
-                    </tr>
+                const newRowContent = `
+                    <td class="p-4 border-b border-gray-700 text-sm">${log.timestamp}</td>
+                    <td class="p-4 border-b border-gray-700 font-bold text-red-400">${log.ip_address}</td>
+                    <td class="p-4 border-b border-gray-700 text-gray-400">${log.username} : <span class="text-gray-500">${log.password}</span></td>
+                    <td class="p-4 border-b border-gray-700 text-yellow-300 font-bold">> ${log.command}</td>
+                    <td class="p-4 border-b border-gray-700 text-center">
+                        <button onclick="blockIp('${log.ip_address}')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-bold transition">
+                            Engelle
+                        </button>
+                    </td>
                 `;
 
-                // Tablonun en üstüne (afterbegin) ekle
-                tableBody.insertAdjacentHTML('afterbegin', newRow);
+                const tr = document.createElement('tr');
+                tr.className = "bg-gray-700 transition duration-1000 ease-in-out";
+                tr.innerHTML = newRowContent;
 
-                // Eklenen satırın rengini 1 saniye sonra normale (siyah/gri) çevir
+                tableBody.insertAdjacentElement('afterbegin', tr);
+
                 setTimeout(() => {
-                    tableBody.firstElementChild.classList.remove('bg-gray-700');
-                    tableBody.firstElementChild.classList.add('hover:bg-gray-700');
+                    tr.classList.remove('bg-gray-700');
+                    tr.classList.add('hover:bg-gray-700');
                 }, 100);
 
             } catch (e) {
