@@ -4,57 +4,71 @@ import threading
 import sqlite3
 import requests
 from datetime import datetime
-import time
+import os
 
 HOST = '0.0.0.0'
 PORT = 2222
+DB_NAME = 'kargucyber.db'
+HOST_KEY = None
 
-# --- VERİTABANI VE KARA LİSTE KONTROLÜ ---
+# --- VERİTABANI KURULUMU ---
 def setup_db():
-    conn = sqlite3.connect('kargucyber.db', check_same_thread=False)
-    cursor = conn.cursor()
-    # Log tablosu
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS attack_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip_address TEXT,
-            username TEXT,
-            password TEXT,
-            command TEXT,
-            timestamp DATETIME
-        )
-    ''')
-    # [YENİ] Kara Liste Tablosu (Engellenenler buraya yazılır)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS blocked_ips (
-            ip TEXT PRIMARY KEY,
-            banned_at DATETIME
-        )
-    ''')
-    conn.commit()
-    return conn
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS attack_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip_address TEXT,
+                username TEXT,
+                password TEXT,
+                command TEXT,
+                timestamp DATETIME
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS blocked_ips (
+                ip TEXT PRIMARY KEY,
+                banned_at DATETIME
+            )
+        ''')
+        conn.commit()
 
-db_conn = setup_db()
+setup_db()
 
-# Bir IP'nin yasaklı olup olmadığını kontrol eden fonksiyon
+# --- RSA ANAHTARI YÜKLEME / OLUŞTURMA ---
+def load_or_generate_key():
+    global HOST_KEY
+    key_path = 'server.key'
+    if os.path.exists(key_path):
+        print(f"[*] Sunucu anahtarı yükleniyor: {key_path}")
+        HOST_KEY = paramiko.RSAKey(filename=key_path)
+    else:
+        print("[*] server.key bulunamadı, yeni bir RSA anahtarı oluşturuluyor...")
+        print("    (Bu işlem birkaç saniye sürebilir, lütfen bekleyin)")
+        HOST_KEY = paramiko.RSAKey.generate(2048)
+        HOST_KEY.write_private_key_file(key_path)
+        print("[+] server.key başarıyla oluşturuldu ve kaydedildi.")
+
 def is_ip_blocked(ip):
     try:
-        # Thread güvenliği için her sorguda yeni bağlantı açıyoruz
-        temp_conn = sqlite3.connect('kargucyber.db')
-        cursor = temp_conn.cursor()
-        cursor.execute("SELECT 1 FROM blocked_ips WHERE ip = ?", (ip,))
-        result = cursor.fetchone()
-        temp_conn.close()
-        return result is not None
-    except:
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM blocked_ips WHERE ip = ?", (ip,))
+            return cursor.fetchone() is not None
+    except sqlite3.Error:
         return False
 
 def log_attack(ip, username, password, command):
     timestamp = datetime.now()
-    cursor = db_conn.cursor()
-    cursor.execute("INSERT INTO attack_logs (ip_address, username, password, command, timestamp) VALUES (?, ?, ?, ?, ?)",
-                   (ip, username, password, command, timestamp))
-    db_conn.commit()
+    try:
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO attack_logs (ip_address, username, password, command, timestamp) VALUES (?, ?, ?, ?, ?)",
+                           (ip, username, password, command, timestamp))
+            conn.commit()
+    except sqlite3.Error as e:
+        print(f"[DB HATA] Log yazılamadı: {e}")
+
     print(f"[LOG] {ip} - {username}:{password} - Komut: {command}")
 
     log_data = {
@@ -64,9 +78,10 @@ def log_attack(ip, username, password, command):
         "command": command,
         "timestamp": str(timestamp).split('.')[0]
     }
+    
     try:
         requests.post("http://127.0.0.1:8000/api/notify", json=log_data, timeout=1)
-    except:
+    except requests.RequestException:
         pass
 
 # --- PARAMIKO SUNUCUSU ---
@@ -74,6 +89,12 @@ class KarguServer(paramiko.ServerInterface):
     def __init__(self, client_ip):
         self.event = threading.Event()
         self.client_ip = client_ip
+        self.username = None
+        self.password = None
+
+    def get_allowed_auths(self, username):
+        # İstemciye hangi giriş yöntemlerine izin verdiğimizi söyleyen KRİTİK fonksiyon
+        return "password"
 
     def check_channel_request(self, kind, chanid):
         if kind == 'session':
@@ -96,20 +117,21 @@ def handle_connection(client, addr):
     ip = addr[0]
     print(f"[!] Bağlantı isteği: {ip}")
 
-    # [KILL SWITCH 1] Bağlanırken kontrol et: IP yasaklı mı?
     if is_ip_blocked(ip):
-        print(f"[ENGEL] Yasaklı IP ({ip}) engellendi!")
+        print(f"[ENGEL] Yasaklı IP ({ip}) bağlantısı reddedildi!")
         client.close()
         return
 
     try:
         transport = paramiko.Transport(client)
-        transport.add_server_key(paramiko.RSAKey(filename='server.key'))
+        transport.add_server_key(HOST_KEY) # Bellekteki anahtarı kullan
+        
         server = KarguServer(ip)
         
         try:
             transport.start_server(server=server)
         except paramiko.SSHException:
+            print(f"[HATA] SSH Müzakeresi Başarısız ({ip})")
             return
 
         channel = transport.accept(20)
@@ -123,7 +145,6 @@ def handle_connection(client, addr):
         channel.send("Welcome to Ubuntu 22.04 LTS (GNU/Linux 5.15.0-76-generic x86_64)\r\n$ ")
 
         while True:
-            # [KILL SWITCH 2] Döngü içinde kontrol: Saldırgan hala içerideyken engellendiyse at!
             if is_ip_blocked(ip):
                 channel.send("\r\n*** BAĞLANTINIZ YÖNETİCİ TARAFINDAN KESİLDİ ***\r\n")
                 print(f"[KILL] {ip} adresi içerideyken atıldı!")
@@ -131,23 +152,26 @@ def handle_connection(client, addr):
 
             command = ""
             while not command.endswith("\r"):
-                # Soketten veri okurken zaman aşımı ekleyip sürekli IP kontrolü yapıyoruz
                 try:
-                    channel.settimeout(1.0) # 1 saniye bekle
-                    recv = channel.recv(1024).decode('utf-8')
+                    channel.settimeout(1.0)
+                    recv_data = channel.recv(1024)
+                    
+                    if not recv_data:
+                        break
+                        
+                    recv = recv_data.decode('utf-8', errors='ignore')
                     command += recv
-                    channel.send(recv)
+                    channel.send(recv) 
                 except socket.timeout:
-                    # Veri gelmediyse döngüye dön ve IP yasaklı mı diye tekrar kontrol et
                     if is_ip_blocked(ip):
                         break
                     continue
-                except:
+                except Exception:
                     break
             
-            # Eğer timeout döngüsünden break ile çıktıysa ve yasaklıysa ana döngüyü de kır
-            if is_ip_blocked(ip):
-                channel.send("\r\n*** BAĞLANTINIZ KESİLDİ ***\r\n")
+            if not command or is_ip_blocked(ip):
+                if is_ip_blocked(ip):
+                     channel.send("\r\n*** BAĞLANTINIZ KESİLDİ ***\r\n")
                 break
 
             command = command.strip()
@@ -163,18 +187,23 @@ def handle_connection(client, addr):
                 channel.send(f"\r\n{server.username}\r\n$ ")
             elif command == "pwd":
                 channel.send(f"\r\n/home/{server.username}\r\n$ ")
-            elif command == "exit":
+            elif command in ["exit", "quit", "logout"]:
                 channel.send("\r\nLogout\r\n")
                 break
             else:
                 channel.send(f"\r\n{command}: command not found\r\n$ ")
 
     except Exception as e:
-        pass # Hataları görmezden gel
+        print(f"[HATA] Bağlantı sonlandı ({ip}): {e}")
     finally:
-        client.close()
+        try:
+            client.close()
+        except:
+            pass
 
 def start_honeypot():
+    load_or_generate_key() # Program başlarken anahtarı 1 kez oluştur
+    
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -183,10 +212,15 @@ def start_honeypot():
         print(f"[*] KarguCyber Honeypot {PORT} portunda aktif! (Kill Switch Aktif)")
 
         while True:
-            client, addr = sock.accept()
-            threading.Thread(target=handle_connection, args=(client, addr)).start()
+            # Hata yakalamayı döngü İÇİNE aldık, böylece bozuk bir paket sunucuyu kapatmaz
+            try:
+                client, addr = sock.accept()
+                threading.Thread(target=handle_connection, args=(client, addr), daemon=True).start()
+            except Exception as e:
+                print(f"[UYARI] Socket accept hatası: {e}")
+                
     except Exception as e:
-        print(f"Sunucu başlatılamadı: {e}")
+        print(f"[KRİTİK HATA] Sunucu başlatılamadı: {e}")
 
 if __name__ == "__main__":
     start_honeypot()
