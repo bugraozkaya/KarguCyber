@@ -1,17 +1,29 @@
-# Python / Sanal Ortam
+# --- Python / Backend ---
 venv/
 __pycache__/
 *.pyc
-
-# Veritabanı
+# Veritabanını GitHub'a yüklemiyoruz (Güvenlik ve boyut için)
 *.db
-*.sqlite3
+backend_honeypot/venv/
 
-# Güvenlik (SSH Anahtarları)
-server.key
+# --- Flutter / Mobile ---
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+# Build klasörü çok büyüktür, asla yüklenmez
+build/
+kargu_cyber_mobile/build/
 
-# İşletim Sistemi
+# --- IDE / Editörler ---
+.vscode/
+.idea/
+*.iml
+*.iws
 .DS_Store
 
-*.key
-*.pub
+# --- Web ---
+# Eğer node_modules kullanırsan buraya eklemelisin
+node_modules/
