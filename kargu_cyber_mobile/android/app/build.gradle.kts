@@ -7,7 +7,12 @@ plugins {
 
 android {
     namespace = "com.example.kargu_cyber_mobile"
-    compileSdk = flutter.compileSdkVersion
+    
+    // --- BURAYI DEĞİŞTİRDİK VE EKLEDİK ---
+    compileSdk = 36
+    buildToolsVersion = "34.0.0"
+    // ------------------------------------
+    
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -22,9 +27,11 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.kargu_cyber_mobile"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        
+        // --- BURAYI GÜVENCEYE ALDIK ---
+        minSdk = flutter.minSdkVersion 
+        // ------------------------------
+        
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
