@@ -25,7 +25,7 @@ class LogNotify(BaseModel):
     command: str
     timestamp: str
 
-# [YENİ] IP Engelleme isteği için veri modeli
+# IP Engelleme isteği için veri modeli
 class BlockRequest(BaseModel):
     ip: str
 
@@ -42,7 +42,7 @@ def get_logs_from_db():
     except Exception as e:
         return {"error": str(e)}
 
-# [YENİ] IP'yi kara listeye ekleyen fonksiyon
+# IP'yi kara listeye ekleyen fonksiyon
 def add_ip_to_blacklist(ip):
     try:
         conn = sqlite3.connect('kargucyber.db')
@@ -68,19 +68,18 @@ def get_logs():
     logs = get_logs_from_db()
     return {"status": "success", "total_attacks": len(logs), "data": logs}
 
-# [GÜNCELLENDİ] Backend'e "Şu IP'yi engelle" komutunu alıp veritabanına yazan endpoint
+# Backend'e "Şu IP'yi engelle" komutunu alıp veritabanına yazan endpoint
 @app.post("/api/block")
 def block_ip(request: BlockRequest):
     add_ip_to_blacklist(request.ip)
     # Engellendiğine dair bilgi mesajı dön
     return {"status": "success", "message": f"{request.ip} adresi kara listeye alındı ve bağlantısı kesilecek!"}
 
-# --- YENİ: VERİTABANINDAN IP SİLME FONKSİYONU ---
+# --- VERİTABANINDAN IP SİLME FONKSİYONU ---
 def remove_ip_from_blacklist(ip):
     try:
-        conn = sqlite3.connect('kargucyber.db') # Senin veritabanı ismin
+        conn = sqlite3.connect('kargucyber.db')
         cursor = conn.cursor()
-        # Senin tablo ismin 'blocked_ips' ve kolon ismin 'ip'
         cursor.execute("DELETE FROM blocked_ips WHERE ip = ?", (ip,))
         conn.commit()
         conn.close()
@@ -89,7 +88,7 @@ def remove_ip_from_blacklist(ip):
         print(f"Hata: {e}")
         return False
 
-# --- YENİ: YASAĞI KALDIRMA ENDPOINT'İ ---
+# --- YASAĞI KALDIRMA ENDPOINT'İ ---
 @app.delete("/api/unblock/{ip}")
 def unblock_ip(ip: str):
     success = remove_ip_from_blacklist(ip)
@@ -97,6 +96,7 @@ def unblock_ip(ip: str):
         return {"status": "success", "message": f"{ip} adresi kara listeden çıkarıldı."}
     else:
         return {"status": "error", "message": "IP silinirken bir hata oluştu."}
+
 # --- WEBSOCKET (CANLI YAYIN) ---
 
 class ConnectionManager:
@@ -108,7 +108,8 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: str):
         for connection in self.active_connections:
@@ -121,11 +122,13 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
+            # İstemciden gelen mesajları dinle (şu an için sadece bağlantıyı açık tutuyor)
             data = await websocket.receive_text() 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
 @app.post("/api/notify")
 async def notify_new_log(log: LogNotify):
+    # Honeypot'tan gelen veriyi JSON'a çevir ve WebSocket tünelinden Flutter'a fırlat
     await manager.broadcast(json.dumps(log.model_dump()))
     return {"status": "success"}
