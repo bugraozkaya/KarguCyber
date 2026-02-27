@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:async'; // Timer için gerekli
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/io.dart';
-import 'package:vibration/vibration.dart'; // [YENİ] Titreşim paketi
+import 'package:vibration/vibration.dart';
 
 void main() {
   runApp(const KarguCyberApp());
@@ -42,9 +42,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Color statusColor = Colors.orange;
   List<dynamic> logs = [];
 
+  // Emülatör için 10.0.2.2 kullanıyoruz. Gerçek cihazda buraya bilgisayarının yerel IP'si (192.168.x.x) gelmeli.
   final String baseUrl = "http://10.0.2.2:8000";
   final String wsUrl = "ws://10.0.2.2:8000/ws/logs";
-  late WebSocketChannel channel;
+  WebSocketChannel? channel;
+  bool isReconnecting = false;
 
   @override
   void initState() {
@@ -53,40 +55,80 @@ class _DashboardScreenState extends State<DashboardScreen> {
     connectWebSocket();
   }
 
-  // CANLI BAĞLANTI VE TİTREŞİM FONKSİYONU
+  // --- CANLI BAĞLANTI (WEBSOCKET) VE OTOMATİK YENİDEN BAĞLANMA ---
   void connectWebSocket() {
-    channel = IOWebSocketChannel.connect(Uri.parse(wsUrl));
+    try {
+      channel = WebSocketChannel.connect(Uri.parse(wsUrl));
 
-    channel.stream.listen((message) {
-      final newLog = json.decode(message);
+      channel!.stream.listen(
+            (message) async {
+          try {
+            final newLog = json.decode(message);
 
-      // [YENİ] SALDIRI ANINDA TİTREŞİM TETİKLE
-      Vibration.hasVibrator().then((hasVibrator) {
-        if (hasVibrator == true) {
-          Vibration.vibrate(duration: 500, amplitude: 128); // 0.5 saniye titre
-        }
-      });
+            // Titreşim Tetikle (Amplitude kullanmadan en güvenli yöntem)
+            bool? hasVibrator = await Vibration.hasVibrator();
+            if (hasVibrator == true) {
+              Vibration.vibrate(duration: 500);
+            }
 
+            // Arayüzü Güncelle
+            setState(() {
+              logs.insert(0, newLog);
+              statusText = "⚠️ CANLI TEHDİT TESPİT EDİLDİ!";
+              statusColor = Colors.redAccent;
+            });
+
+            // 3 saniye sonra uyarıyı normale döndür
+            Future.delayed(const Duration(seconds: 3), () {
+              if (mounted) {
+                setState(() {
+                  statusText = "🛡️ SİSTEM AKTİF - İZLENİYOR";
+                  statusColor = Colors.greenAccent;
+                });
+              }
+            });
+
+          } catch (e) {
+            debugPrint("Gelen JSON parse edilemedi: $e");
+          }
+        },
+        onError: (error) {
+          debugPrint("WS Hatası: $error");
+          handleDisconnect();
+        },
+        onDone: () {
+          debugPrint("WS Bağlantısı Kapandı");
+          handleDisconnect();
+        },
+      );
+    } catch (e) {
+      debugPrint("WS Başlatma Hatası: $e");
+      handleDisconnect();
+    }
+  }
+
+  // Bağlantı koptuğunda 5 saniyede bir tekrar denemesi için
+  void handleDisconnect() {
+    if (isReconnecting) return;
+    isReconnecting = true;
+
+    if (mounted) {
       setState(() {
-        logs.insert(0, newLog);
-        statusText = "⚠️ CANLI TEHDİT TESPİT EDİLDİ!";
-        statusColor = Colors.redAccent;
-      });
-    }, onError: (error) {
-      debugPrint("WS Hatası: $error");
-      setState(() {
-        statusText = "❌ CANLI BAĞLANTISI KOPUK";
+        statusText = "❌ BAĞLANTI KOPUK (Yeniden deneniyor...)";
         statusColor = Colors.red;
       });
-    }, onDone: () {
-      debugPrint("WS Bağlantısı Kapandı");
+    }
+
+    Future.delayed(const Duration(seconds: 5), () {
+      isReconnecting = false;
+      if (mounted) connectWebSocket();
     });
   }
 
-  // LOGLARI ÇEKME
+  // --- HTTP API İSTEKLERİ ---
   Future<void> fetchLogs() async {
     try {
-      final response = await http.get(Uri.parse("$baseUrl/api/logs"));
+      final response = await http.get(Uri.parse("$baseUrl/api/logs")).timeout(const Duration(seconds: 5));
       if (response.statusCode == 200) {
         final Map<String, dynamic> responseData = json.decode(response.body);
         setState(() {
@@ -96,14 +138,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         });
       }
     } catch (e) {
-      setState(() {
-        statusText = "❌ SUNUCU BAĞLANTISI KOPUK";
-        statusColor = Colors.red;
-      });
+      debugPrint("API Fetch Hatası: $e");
+      if (mounted) {
+        setState(() {
+          statusText = "❌ SUNUCUYA ERİŞİLEMİYOR";
+          statusColor = Colors.red;
+        });
+      }
     }
   }
 
-  // KULLANICIYI ENGELLEME
   Future<void> blockIP(String ip) async {
     try {
       final response = await http.post(
@@ -112,8 +156,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         body: json.encode({"ip": ip}),
       );
       if (response.statusCode == 200) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("$ip kara listeye alındı!"), backgroundColor: Colors.red),
+          SnackBar(content: Text("🛡️ $ip kara listeye alındı!"), backgroundColor: Colors.red),
         );
       }
     } catch (e) {
@@ -121,13 +166,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // YASAĞI KALDIRMA
   Future<void> unblockIP(String ip) async {
     try {
       final response = await http.delete(Uri.parse("$baseUrl/api/unblock/$ip"));
       if (response.statusCode == 200) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("$ip yasağı kaldırıldı!"), backgroundColor: Colors.green),
+          SnackBar(content: Text("✅ $ip yasağı kaldırıldı!"), backgroundColor: Colors.green),
         );
         fetchLogs();
       }
@@ -138,10 +183,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
-    channel.sink.close();
+    channel?.sink.close();
     super.dispose();
   }
 
+  // --- ARAYÜZ (UI) ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -159,6 +205,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         padding: const EdgeInsets.all(20.0),
         child: Column(
           children: [
+            // Durum Paneli
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -170,11 +217,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               child: Text(
                 statusText,
-                style: TextStyle(color: statusColor, fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(color: statusColor, fontSize: 16, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
               ),
             ),
             const SizedBox(height: 30),
+
+            // Log Listesi
             Expanded(
               child: Container(
                 width: double.infinity,
@@ -193,21 +242,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     return Card(
                       color: const Color(0xFF1F2937),
                       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       child: ListTile(
                         leading: const Icon(Icons.security, color: Colors.redAccent),
-                        title: Text(ip, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text("Komut: ${log['command'] ?? 'N/A'}\n${log['timestamp']}"),
+                        title: Text(ip, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                        subtitle: Text(
+                          "Komut: ${log['command'] ?? 'N/A'}\n${log['timestamp']}",
+                          style: const TextStyle(color: Colors.white70),
+                        ),
                         isThreeLine: true,
                         trailing: Wrap(
-                          spacing: 8,
+                          spacing: 4,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.block, color: Colors.red),
+                              icon: const Icon(Icons.block, color: Colors.redAccent),
                               onPressed: () => blockIP(ip),
                               tooltip: "Engelle",
                             ),
                             IconButton(
-                              icon: const Icon(Icons.delete_forever, color: Colors.orangeAccent),
+                              icon: const Icon(Icons.delete_outline, color: Colors.orangeAccent),
                               onPressed: () => unblockIP(ip),
                               tooltip: "Yasağı Kaldır",
                             ),
@@ -220,13 +273,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             const SizedBox(height: 20),
+
+            // Manuel Yenileme Butonu
             SizedBox(
               width: double.infinity,
               height: 50,
               child: ElevatedButton.icon(
                 onPressed: fetchLogs,
                 icon: const Icon(Icons.radar),
-                label: const Text("TÜMÜNÜ YENİLE", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                label: const Text("SİSTEMİ KONTROL ET", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF2563EB),
                   foregroundColor: Colors.white,
