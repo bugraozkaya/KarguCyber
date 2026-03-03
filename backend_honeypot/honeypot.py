@@ -3,11 +3,13 @@ import paramiko
 import threading
 import sqlite3
 import requests
+import time
 from datetime import datetime
 import os
 
 HOST = '0.0.0.0'
-PORT = 2222
+SSH_PORT = 2222
+HTTP_PORT = 8080  # Web bal küpü için yeni portumuz
 DB_NAME = 'kargucyber.db'
 HOST_KEY = None
 
@@ -84,7 +86,9 @@ def log_attack(ip, username, password, command):
     except requests.RequestException:
         pass
 
-# --- PARAMIKO SUNUCUSU ---
+# ==========================================
+# 1. BÖLÜM: SSH HONEYPOT MODÜLÜ (PORT 2222)
+# ==========================================
 class KarguServer(paramiko.ServerInterface):
     def __init__(self, client_ip):
         self.event = threading.Event()
@@ -93,7 +97,6 @@ class KarguServer(paramiko.ServerInterface):
         self.password = None
 
     def get_allowed_auths(self, username):
-        # İstemciye hangi giriş yöntemlerine izin verdiğimizi söyleyen KRİTİK fonksiyon
         return "password"
 
     def check_channel_request(self, kind, chanid):
@@ -113,9 +116,9 @@ class KarguServer(paramiko.ServerInterface):
         self.event.set()
         return True
 
-def handle_connection(client, addr):
+def handle_ssh_connection(client, addr):
     ip = addr[0]
-    print(f"[!] Bağlantı isteği: {ip}")
+    print(f"[!] Yeni SSH Bağlantısı: {ip}")
 
     if is_ip_blocked(ip):
         print(f"[ENGEL] Yasaklı IP ({ip}) bağlantısı reddedildi!")
@@ -124,14 +127,13 @@ def handle_connection(client, addr):
 
     try:
         transport = paramiko.Transport(client)
-        transport.add_server_key(HOST_KEY) # Bellekteki anahtarı kullan
+        transport.add_server_key(HOST_KEY) 
         
         server = KarguServer(ip)
         
         try:
             transport.start_server(server=server)
         except paramiko.SSHException:
-            print(f"[HATA] SSH Müzakeresi Başarısız ({ip})")
             return
 
         channel = transport.accept(20)
@@ -193,34 +195,109 @@ def handle_connection(client, addr):
             else:
                 channel.send(f"\r\n{command}: command not found\r\n$ ")
 
-    except Exception as e:
-        print(f"[HATA] Bağlantı sonlandı ({ip}): {e}")
+    except Exception:
+        pass
     finally:
         try:
             client.close()
         except:
             pass
 
-def start_honeypot():
-    load_or_generate_key() # Program başlarken anahtarı 1 kez oluştur
-    
+def start_ssh_honeypot():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((HOST, PORT))
+        sock.bind((HOST, SSH_PORT))
         sock.listen(100)
-        print(f"[*] KarguCyber Honeypot {PORT} portunda aktif! (Kill Switch Aktif)")
+        print(f"[*] KarguCyber SSH Honeypot {SSH_PORT} portunda aktif! 🛡️")
 
         while True:
-            # Hata yakalamayı döngü İÇİNE aldık, böylece bozuk bir paket sunucuyu kapatmaz
             try:
                 client, addr = sock.accept()
-                threading.Thread(target=handle_connection, args=(client, addr), daemon=True).start()
+                threading.Thread(target=handle_ssh_connection, args=(client, addr), daemon=True).start()
             except Exception as e:
-                print(f"[UYARI] Socket accept hatası: {e}")
-                
+                pass
     except Exception as e:
-        print(f"[KRİTİK HATA] Sunucu başlatılamadı: {e}")
+        print(f"[KRİTİK HATA] SSH Sunucu başlatılamadı: {e}")
 
+# ==========================================
+# 2. BÖLÜM: WEB (HTTP) HONEYPOT MODÜLÜ (PORT 8080)
+# ==========================================
+def handle_http_connection(client_socket, addr):
+    ip = addr[0]
+    
+    if is_ip_blocked(ip):
+        client_socket.close()
+        return
+
+    try:
+        client_socket.settimeout(3.0)
+        request = client_socket.recv(1024).decode('utf-8', errors='ignore')
+        
+        if request:
+            # Gelen HTTP isteğinin ilk satırını al (Örn: GET /wp-admin HTTP/1.1)
+            first_line = request.split('\n')[0].strip()
+            
+            # Eğer istek boş değilse logla
+            if first_line:
+                print(f"[!] Yeni WEB Saldırısı: {ip} -> {first_line}")
+                
+                # Mobil ve Web panel için özel formatlanmış log
+                log_attack(ip, "[WEB_HTTP]", "PORT_8080", first_line)
+
+            # Hacker'ı oylamak için sahte bir Apache Sunucu yanıtı dönüyoruz
+            fake_response = (
+                "HTTP/1.1 200 OK\r\n"
+                "Server: Apache/2.4.41 (Ubuntu)\r\n"
+                "Content-Type: text/html; charset=UTF-8\r\n\r\n"
+                "<html><head><title>Admin Panel</title></head>"
+                "<body><h1>403 Forbidden - Bu Olay KarguCyber Tarafından Kaydedildi!</h1></body></html>\r\n"
+            )
+            client_socket.sendall(fake_response.encode('utf-8'))
+            
+    except Exception:
+        pass
+    finally:
+        client_socket.close()
+
+def start_http_honeypot():
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((HOST, HTTP_PORT))
+        sock.listen(100)
+        print(f"[*] KarguCyber WEB Honeypot {HTTP_PORT} portunda aktif! 🌐")
+
+        while True:
+            try:
+                client, addr = sock.accept()
+                threading.Thread(target=handle_http_connection, args=(client, addr), daemon=True).start()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[KRİTİK HATA] Web Sunucu başlatılamadı: {e}")
+
+# ==========================================
+# ANA ÇALIŞTIRICI (MULTI-THREADING)
+# ==========================================
 if __name__ == "__main__":
-    start_honeypot()
+    load_or_generate_key() 
+    
+    print("\n" + "="*50)
+    print("🚀 KARGUCYBER MULTI-HONEYPOT BAŞLATILIYOR 🚀")
+    print("="*50 + "\n")
+
+    # İki ayrı asenkron thread oluşturuyoruz
+    ssh_thread = threading.Thread(target=start_ssh_honeypot, daemon=True)
+    web_thread = threading.Thread(target=start_http_honeypot, daemon=True)
+
+    # İkisini aynı anda başlat
+    ssh_thread.start()
+    web_thread.start()
+
+    # Ana programın kapanmaması için bekletiyoruz
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n[!] KarguCyber Sistemleri Kapatılıyor...")
