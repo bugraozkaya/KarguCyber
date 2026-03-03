@@ -17,13 +17,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Gelen log verisinin yapısı
+# Gelen log verisinin yapısı (GÜNCELLENDİ)
 class LogNotify(BaseModel):
     ip_address: str
     username: str
     password: str
     command: str
     timestamp: str
+    threat_label: str = "UNKNOWN_THREAT" # <--- YENİ EKLENEN SATIR
 
 # IP Engelleme isteği için veri modeli
 class BlockRequest(BaseModel):
