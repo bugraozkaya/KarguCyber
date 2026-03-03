@@ -10,7 +10,7 @@ async function fetchLogs() {
         tableBody.innerHTML = ''; 
 
         if (result.data.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-gray-500">Henüz saldırı kaydı bulunmuyor.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">Henüz saldırı kaydı bulunmuyor.</td></tr>';
             return;
         }
 
@@ -23,18 +23,52 @@ async function fetchLogs() {
         console.error("Veri çekme hatası:", error);
         const tableBody = document.getElementById('log-table-body');
         if(tableBody) {
-            tableBody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-red-500">API bağlantı hatası! Sunucunun çalıştığından emin olun.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-red-500">API bağlantı hatası! Sunucunun çalıştığından emin olun.</td></tr>';
         }
     }
 }
 
-// Tablo satırı oluşturucu (HTML şablonu)
+// --- YENİ EKLENEN: Tehdit Etiketi İçin Renk ve Rozet Üretici ---
+function getThreatBadge(label) {
+    // Eğer eski loglardan gelen etiketsiz bir veri varsa
+    if (!label) return `<span class="bg-gray-600 text-gray-200 px-2 py-1 rounded text-xs font-bold">BİLİNMEYEN</span>`;
+
+    let colorClass = "bg-gray-600 text-gray-200"; // Varsayılan Gri
+    let displayName = label;
+
+    // Web Tehditleri (Mor/Pembe Tonları)
+    if (label.includes("WEB_")) {
+        if (label === "WEB_WP_BRUTEFORCE") { colorClass = "bg-fuchsia-900 text-fuchsia-300"; displayName = "WP KABA KUVVET"; }
+        else if (label === "WEB_ENV_EXPLOIT") { colorClass = "bg-red-900 text-red-300"; displayName = "ENV SIZINTISI"; }
+        else if (label === "WEB_SQL_INJECTION") { colorClass = "bg-orange-900 text-orange-300"; displayName = "SQL INJECTION"; }
+        else { colorClass = "bg-purple-900 text-purple-300"; displayName = "WEB TARAMASI"; }
+    } 
+    // SSH Tehditleri (Kırmızı/Sarı/Mavi Tonları)
+    else if (label.includes("SSH_")) {
+        if (label === "SSH_MALWARE_DOWNLOAD") { colorClass = "bg-red-600 text-white animate-pulse shadow-lg shadow-red-500/50"; displayName = "ZARARLI YAZILIM"; }
+        else if (label === "SSH_DESTRUCTIVE_ACTION") { colorClass = "bg-red-800 text-red-200"; displayName = "SİSTEM İMHASI"; }
+        else if (label === "SSH_PAYLOAD_EXECUTION") { colorClass = "bg-orange-600 text-white"; displayName = "VİRÜS ÇALIŞTIRMA"; }
+        else if (label === "SSH_RECONNAISSANCE") { colorClass = "bg-blue-900 text-blue-300"; displayName = "SİSTEM KEŞFİ"; }
+        else if (label === "SSH_AUTH_ATTEMPT") { colorClass = "bg-gray-700 text-gray-300"; displayName = "ŞİFRE DENEMESİ"; }
+        else { colorClass = "bg-yellow-900 text-yellow-300"; displayName = "SSH EXPLOIT"; }
+    }
+
+    return `<span class="${colorClass} px-2 py-1 rounded text-xs font-bold tracking-wide">${displayName}</span>`;
+}
+
+// Tablo satırı oluşturucu (GÜNCELLENDİ: Yeni Sütun Eklendi)
 function createRow(log) {
+    // colspan uyumu için etiket sütunu eklendi
     return `
         <tr class="hover:bg-gray-700 transition duration-150">
             <td class="p-4 border-b border-gray-700 text-sm">${log.timestamp.split('.')[0]}</td>
             <td class="p-4 border-b border-gray-700 font-bold text-red-400">${log.ip_address}</td>
             <td class="p-4 border-b border-gray-700 text-gray-400">${log.username} : <span class="text-gray-500">${log.password}</span></td>
+            
+            <td class="p-4 border-b border-gray-700">
+                ${getThreatBadge(log.threat_label)}
+            </td>
+
             <td class="p-4 border-b border-gray-700 text-yellow-300 font-bold">> ${log.command}</td>
             <td class="p-4 border-b border-gray-700 text-center space-x-2">
                 <button onclick="blockIp('${log.ip_address}')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-bold transition">
@@ -59,7 +93,7 @@ async function blockIp(ip) {
         });
         const result = await response.json();
         alert(result.status === 'success' ? "🛑 Engellendi: " + ip : "Hata: " + result.message);
-        fetchLogs(); // Durumu güncelle
+        fetchLogs(); 
     } catch (error) { 
         alert("Bağlantı hatası!"); 
     }
@@ -75,7 +109,7 @@ async function unblockIp(ip) {
         const result = await response.json();
         if (result.status === 'success') {
             alert("✅ YASAK KALDIRILDI: " + ip);
-            fetchLogs(); // Tabloyu tazele
+            fetchLogs(); 
         } else {
             alert("Hata: " + result.message);
         }
@@ -101,6 +135,7 @@ ws.onmessage = function(event) {
         
         const tr = document.createElement('tr');
         tr.className = "bg-gray-700 transition duration-1000";
+        // innerHTML'i bir tablo hücresi dizisi olarak veriyoruz, getThreatBadge sayesinde log verisi de renkli rozetle gelecek
         tr.innerHTML = createRow(log);
         
         if(tableBody) {
