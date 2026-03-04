@@ -71,14 +71,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     fetchLogs();
     connectWebSocket();
-    setupFirebase(); // YENİ EKLENDİ
+    setupFirebase();
   }
 
-  // YENİ EKLENEN FİREBASE FONKSİYONU
   void setupFirebase() async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-    // Kullanıcıdan bildirim izni iste (Ekrana "Bildirim göndersin mi?" uyarı kutusu çıkar)
     NotificationSettings settings = await messaging.requestPermission(
       alert: true,
       badge: true,
@@ -88,11 +86,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
       debugPrint('Kullanıcı bildirim izni verdi.');
 
-      // TELEFONUN BİLDİRİM KİMLİĞİNİ (TOKEN) AL
       String? token = await messaging.getToken();
       debugPrint("🔥 KOPYALANACAK FCM TOKEN: $token");
 
-      // Uygulama açıkken (ön plandayken) bildirim gelirse dinle
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
         debugPrint('Ön planda mesaj geldi: ${message.notification?.title}');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -104,7 +100,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
     }
   }
-
 
   void connectWebSocket() {
     try {
@@ -221,13 +216,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  // --- YENİ EKLENEN: KARANTİNA KASASINI AÇAN FONKSİYON ---
+  void openQuarantineVault() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1F2937),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.bug_report, color: Colors.greenAccent, size: 30),
+                  SizedBox(width: 10),
+                  Text("KARANTİNA KASASI", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                ],
+              ),
+              const Divider(color: Colors.white24, height: 30, thickness: 1),
+              Expanded(
+                child: FutureBuilder(
+                  future: http.get(Uri.parse("$baseUrl/api/quarantine")),
+                  builder: (context, AsyncSnapshot<http.Response> snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                    if (!snapshot.hasData || snapshot.hasError) return const Center(child: Text("Veri alınamadı.", style: TextStyle(color: Colors.white54)));
+
+                    final responseData = json.decode(snapshot.data!.body);
+                    final List quarantineList = responseData['data'] ?? [];
+
+                    if (quarantineList.isEmpty) {
+                      return const Center(child: Text("Karantina temiz. Zararlı yazılım yok.", style: TextStyle(color: Colors.green, fontSize: 16)));
+                    }
+
+                    return ListView.builder(
+                      itemCount: quarantineList.length,
+                      itemBuilder: (context, index) {
+                        final virus = quarantineList[index];
+                        return Card(
+                          color: Colors.black26,
+                          child: ListTile(
+                            leading: const Icon(Icons.pest_control, color: Colors.redAccent),
+                            title: Text(virus['filename'], style: const TextStyle(color: Colors.white, fontSize: 12)),
+                            subtitle: Text("Kaynak IP: ${virus['ip_source']} | Boyut: ${virus['size']}", style: const TextStyle(color: Colors.orangeAccent, fontSize: 11)),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
     channel?.sink.close();
     super.dispose();
   }
 
-  // --- Tehdit Sınıfına Göre Renkli Etiket (Badge) Oluşturucu ---
   Widget buildThreatBadge(String? label) {
     String text = "BİLİNMEYEN";
     Color bgColor = Colors.grey.shade800;
@@ -277,6 +329,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Text("KARGU CYBER", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2)),
           ],
         ),
+        // YENİ EKLENDİ: Sağ üst köşedeki böcek ikonu (Karantina)
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.bug_report, color: Colors.greenAccent),
+            tooltip: "Karantinayı Aç",
+            onPressed: openQuarantineVault,
+          ),
+          const SizedBox(width: 10),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(20.0),
