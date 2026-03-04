@@ -6,6 +6,7 @@ import requests
 import time
 from datetime import datetime
 import os
+import re  # YENİ EKLENDİ: Komut içindeki URL'leri bulmak için
 
 HOST = '0.0.0.0'
 SSH_PORT = 2222
@@ -13,8 +14,50 @@ HTTP_PORT = 8080  # Web bal küpü
 DB_NAME = 'kargucyber.db'
 HOST_KEY = None
 
+# --- YENİ EKLENEN: KARANTİNA KLASÖRÜ ---
+QUARANTINE_DIR = "quarantine"
+if not os.path.exists(QUARANTINE_DIR):
+    os.makedirs(QUARANTINE_DIR)
+    print(f"[*] ☣️ Karantina klasörü oluşturuldu: {QUARANTINE_DIR}/")
+
+# --- YENİ EKLENEN: ZARARLI YAZILIM YAKALAMA MOTORU ---
+def quarantine_malware(ip, command):
+    # Komutun içindeki URL veya IP adreslerini ayıkla (Örn: wget http://virus.com/bot.sh)
+    words = command.split()
+    for word in words:
+        # Kelime http ile mi başlıyor veya 192.168.1.1 gibi bir IP formatında mı?
+        if word.startswith("http://") or word.startswith("https://") or re.match(r'^\d{1,3}(\.\d{1,3}){3}', word):
+            url = word
+            # Eğer sadece IP yazılmışsa başına http ekle
+            if not url.startswith("http"):
+                url = "http://" + url
+                
+            try:
+                print(f"\n[*] 🕵️ Kargu Ajanı devrede... Zararlı yazılım indiriliyor: {url}")
+                # stream=True ile dosyayı parça parça indiriyoruz (Güvenlik için)
+                response = requests.get(url, stream=True, timeout=5)
+                
+                if response.status_code == 200:
+                    # Dosyayı tehlikesiz hale getir (uzantısını .vir yap)
+                    safe_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    safe_filename = f"malware_{ip}_{safe_time}.vir"
+                    filepath = os.path.join(QUARANTINE_DIR, safe_filename)
+
+                    with open(filepath, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=1024):
+                            # MAKSİMUM 5 MB İNDİR! (Hackerlar devasa dosyalarla diskimizi dolduramasın)
+                            if f.tell() > 5 * 1024 * 1024: 
+                                break
+                            f.write(chunk)
+                            
+                    print(f"[+] ☣️ VİRÜS BAŞARIYLA KARANTİNAYA ALINDI: {filepath}\n")
+            except Exception:
+                # Kendi sahte/lokal URL'lerini yazdıklarında sistem çökmesin diye sessizce geç
+                pass
+
+
 # ==========================================
-# YENİ: TEHDİT ANALİZ MOTORU (DATA LABELING)
+# TEHDİT ANALİZ MOTORU (DATA LABELING)
 # ==========================================
 def analyze_threat(port, command):
     command = command.lower()
@@ -47,7 +90,7 @@ def analyze_threat(port, command):
             
     return "UNKNOWN_THREAT"
 
-# --- VERİTABANI KURULUMU (threat_label eklendi) ---
+# --- VERİTABANI KURULUMU ---
 def setup_db():
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
@@ -92,7 +135,7 @@ def is_ip_blocked(ip):
     except sqlite3.Error:
         return False
 
-# --- LOGLAMA FONKSİYONU (threat_label eklendi) ---
+# --- LOGLAMA FONKSİYONU ---
 def log_attack(ip, username, password, command, port):
     timestamp = datetime.now()
     
@@ -110,6 +153,10 @@ def log_attack(ip, username, password, command, port):
         print(f"[DB HATA] Log yazılamadı: {e}")
 
     print(f"[LOG] {ip} | Tür: {threat_label} | Komut: {command}")
+
+    # --- YENİ EKLENEN: EĞER VİRÜS İNDİRME TESPİT EDİLİRSE KARANTİNAYI TETİKLE ---
+    if threat_label == "SSH_MALWARE_DOWNLOAD":
+        threading.Thread(target=quarantine_malware, args=(ip, command), daemon=True).start()
 
     # 3. API'ye Gönder
     log_data = {
@@ -203,6 +250,8 @@ def handle_ssh_connection(client, addr):
             if command == "ls": channel.send("\r\nDesktop  Documents  Downloads  passwords.txt  scripts\r\n$ ")
             elif command == "whoami": channel.send(f"\r\n{server.username}\r\n$ ")
             elif command == "pwd": channel.send(f"\r\n/home/{server.username}\r\n$ ")
+            elif "wget" in command or "curl" in command:
+                channel.send("\r\nResolving host... connected.\r\nHTTP request sent, awaiting response... 200 OK\r\nSaving to: 'payload.sh'\r\n100%[===================>] 1,024  --.-KB/s    in 0s\r\n$ ")
             elif command in ["exit", "quit", "logout"]:
                 channel.send("\r\nLogout\r\n")
                 break
@@ -273,7 +322,7 @@ def start_http_honeypot():
 if __name__ == "__main__":
     load_or_generate_key() 
     print("\n" + "="*50)
-    print("🚀 KARGUCYBER MULTI-HONEYPOT BAŞLATILIYOR 🚀")
+    print("🚀 KARGUCYBER MULTI-HONEYPOT & MALWARE QUARANTINE BAŞLATILIYOR 🚀")
     print("="*50 + "\n")
 
     threading.Thread(target=start_ssh_honeypot, daemon=True).start()
