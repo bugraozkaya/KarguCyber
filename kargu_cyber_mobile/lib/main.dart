@@ -5,7 +5,26 @@ import 'dart:async';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:vibration/vibration.dart';
 
-void main() {
+// YENİ EKLENEN FİREBASE KÜTÜPHANELERİ
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+
+// Uygulama kapalıyken arka planda bildirimleri dinleyecek fonksiyon
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  debugPrint("🚨 Arka planda tehdit algılandı: ${message.notification?.title}");
+}
+
+// MAIN FONKSİYONU GÜNCELLENDİ
+void main() async {
+  // Firebase'in başlaması için Flutter motorunu hazır bekle diyoruz
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+
+  // Arka plan dinleyicisini aktifleştir
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
   runApp(const KarguCyberApp());
 }
 
@@ -52,7 +71,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     fetchLogs();
     connectWebSocket();
+    setupFirebase(); // YENİ EKLENDİ
   }
+
+  // YENİ EKLENEN FİREBASE FONKSİYONU
+  void setupFirebase() async {
+    FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+    // Kullanıcıdan bildirim izni iste (Ekrana "Bildirim göndersin mi?" uyarı kutusu çıkar)
+    NotificationSettings settings = await messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      debugPrint('Kullanıcı bildirim izni verdi.');
+
+      // TELEFONUN BİLDİRİM KİMLİĞİNİ (TOKEN) AL
+      String? token = await messaging.getToken();
+      debugPrint("🔥 KOPYALANACAK FCM TOKEN: $token");
+
+      // Uygulama açıkken (ön plandayken) bildirim gelirse dinle
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        debugPrint('Ön planda mesaj geldi: ${message.notification?.title}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("🚨 ${message.notification?.title}\n${message.notification?.body}"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      });
+    }
+  }
+
 
   void connectWebSocket() {
     try {
@@ -175,7 +227,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // --- YENİ EKLENEN: Tehdit Sınıfına Göre Renkli Etiket (Badge) Oluşturucu ---
+  // --- Tehdit Sınıfına Göre Renkli Etiket (Badge) Oluşturucu ---
   Widget buildThreatBadge(String? label) {
     String text = "BİLİNMEYEN";
     Color bgColor = Colors.grey.shade800;
@@ -264,7 +316,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   itemBuilder: (context, index) {
                     final log = logs[index];
                     final ip = log['ip_address'] ?? 'Bilinmeyen IP';
-                    final threatLabel = log['threat_label']; // Yeni veri çekildi
+                    final threatLabel = log['threat_label'];
 
                     return Card(
                       color: const Color(0xFF1F2937),
@@ -280,12 +332,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               Text(ip, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15)),
                             ],
                           ),
-                          // GÜNCELLENEN KISIM: Rozet (Badge) + Komut + Tarih alt alta dizildi
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const SizedBox(height: 5),
-                              buildThreatBadge(threatLabel), // Renkli Etiket Burada
+                              buildThreatBadge(threatLabel),
                               Text(
                                 "> ${log['command'] ?? 'N/A'}",
                                 style: const TextStyle(color: Colors.yellowAccent, fontFamily: 'monospace', fontSize: 13),
@@ -298,7 +349,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ],
                           ),
                           trailing: Wrap(
-                            spacing: -10, // Butonları biraz daha yakınlaştırdık
+                            spacing: -10,
                             children: [
                               IconButton(
                                 icon: const Icon(Icons.block, color: Colors.redAccent),
