@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "114199251782",
+    "project_id": "kargucyber",
+    "storage_bucket": "kargucyber.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:114199251782:android:72e208ea57c0e37327f347",
+        "android_client_info": {
+          "package_name": "com.example.kargu_cyber_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDDPns5O63_I9muvFIpXwK9lLE_yWdEPv4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
