@@ -5,26 +5,19 @@ import 'dart:async';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:vibration/vibration.dart';
 
-// YENİ EKLENEN FİREBASE KÜTÜPHANELERİ
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
-// Uygulama kapalıyken arka planda bildirimleri dinleyecek fonksiyon
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   debugPrint("🚨 Arka planda tehdit algılandı: ${message.notification?.title}");
 }
 
-// MAIN FONKSİYONU GÜNCELLENDİ
 void main() async {
-  // Firebase'in başlaması için Flutter motorunu hazır bekle diyoruz
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
-
-  // Arka plan dinleyicisini aktifleştir
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
   runApp(const KarguCyberApp());
 }
 
@@ -78,19 +71,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
     NotificationSettings settings = await messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
+      alert: true, badge: true, sound: true,
     );
 
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      debugPrint('Kullanıcı bildirim izni verdi.');
-
-      String? token = await messaging.getToken();
-      debugPrint("🔥 KOPYALANACAK FCM TOKEN: $token");
-
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-        debugPrint('Ön planda mesaj geldi: ${message.notification?.title}');
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("🚨 ${message.notification?.title}\n${message.notification?.body}"),
@@ -111,10 +97,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final newLog = json.decode(message);
 
             bool? hasVibrator = await Vibration.hasVibrator();
-            if (hasVibrator == true) {
-              Vibration.vibrate(duration: 500);
-            }
+            if (hasVibrator == true) Vibration.vibrate(duration: 500);
 
+            if (!mounted) return;
             setState(() {
               logs.insert(0, newLog);
               statusText = "⚠️ CANLI TEHDİT TESPİT EDİLDİ!";
@@ -130,15 +115,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               }
             });
           } catch (e) {
-            debugPrint("Gelen JSON parse edilemedi: $e");
+            debugPrint("JSON Parse Hatası: $e");
           }
         },
-        onError: (error) {
-          handleDisconnect();
-        },
-        onDone: () {
-          handleDisconnect();
-        },
+        onError: (error) => handleDisconnect(),
+        onDone: () => handleDisconnect(),
       );
     } catch (e) {
       handleDisconnect();
@@ -167,11 +148,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final response = await http.get(Uri.parse("$baseUrl/api/logs")).timeout(const Duration(seconds: 5));
       if (response.statusCode == 200) {
         final Map<String, dynamic> responseData = json.decode(response.body);
-        setState(() {
-          logs = responseData['data'] ?? [];
-          statusText = logs.isEmpty ? "🟢 SİSTEM AKTİF - SALDIRI YOK" : "🛡️ SİSTEM GÜNCEL";
-          statusColor = logs.isEmpty ? Colors.greenAccent : Colors.blueAccent;
-        });
+        if (mounted) {
+          setState(() {
+            logs = responseData['data'] ?? [];
+            statusText = logs.isEmpty ? "🟢 SİSTEM AKTİF - SALDIRI YOK" : "🛡️ SİSTEM GÜNCEL";
+            statusColor = logs.isEmpty ? Colors.greenAccent : Colors.blueAccent;
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -190,8 +173,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         headers: {"Content-Type": "application/json"},
         body: json.encode({"ip": ip}),
       );
+      if (!mounted) return; // HATA DÜZELTİLDİ
+
       if (response.statusCode == 200) {
-        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("🛡️ $ip kara listeye alındı!"), backgroundColor: Colors.red),
         );
@@ -204,8 +188,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> unblockIP(String ip) async {
     try {
       final response = await http.delete(Uri.parse("$baseUrl/api/unblock/$ip"));
+      if (!mounted) return; // HATA DÜZELTİLDİ
+
       if (response.statusCode == 200) {
-        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("✅ $ip yasağı kaldırıldı!"), backgroundColor: Colors.green),
         );
@@ -216,7 +201,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // --- YENİ EKLENEN: KARANTİNA KASASINI AÇAN FONKSİYON ---
   void openQuarantineVault() {
     showModalBottomSheet(
       context: context,
@@ -300,6 +284,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
         else if (label == "SSH_AUTH_ATTEMPT") { text = "ŞİFRE DENEMESİ"; bgColor = Colors.grey.shade700; textColor = Colors.grey.shade300; }
         else { text = "SSH EXPLOIT"; bgColor = Colors.yellow.shade900; textColor = Colors.yellow.shade200; }
       }
+      // YENİ EKLENEN PROTOKOLLER İÇİN RENKLER
+      else if (label.contains("FTP_")) {
+        bgColor = Colors.teal.shade900;
+        textColor = Colors.teal.shade200;
+        if (label == "FTP_BRUTEFORCE") text = "FTP KABA KUVVET";
+        else if (label == "FTP_DATA_THEFT") text = "DOSYA HIRSIZLIĞI";
+        else text = "FTP TARAMASI";
+      }
+      else if (label.contains("IOT_")) {
+        bgColor = Colors.cyan.shade900;
+        textColor = Colors.cyan.shade200;
+        if (label == "IOT_TELNET_BRUTEFORCE") text = "IOT BOTNET (MIRAI)";
+        else text = "TELNET EXPLOIT";
+      }
     }
 
     return Container(
@@ -316,7 +314,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // --- ARAYÜZ (UI) ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -329,7 +326,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Text("KARGU CYBER", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2)),
           ],
         ),
-        // YENİ EKLENDİ: Sağ üst köşedeki böcek ikonu (Karantina)
         actions: [
           IconButton(
             icon: const Icon(Icons.bug_report, color: Colors.greenAccent),
@@ -343,15 +339,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
         padding: const EdgeInsets.all(20.0),
         child: Column(
           children: [
-            // Durum Paneli
+            // UYARILAR DÜZELTİLDİ: withOpacity yerine withValues kullanıldı
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: const Color(0xFF1F2937),
                 borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: statusColor.withOpacity(0.5)),
-                boxShadow: [BoxShadow(color: statusColor.withOpacity(0.2), blurRadius: 10)],
+                border: Border.all(color: statusColor.withValues(alpha: 0.5)),
+                boxShadow: [BoxShadow(color: statusColor.withValues(alpha: 0.2), blurRadius: 10)],
               ),
               child: Text(
                 statusText,
@@ -361,7 +357,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Log Listesi
             Expanded(
               child: Container(
                 width: double.infinity,
@@ -433,7 +428,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Manuel Yenileme Butonu
             SizedBox(
               width: double.infinity,
               height: 50,
